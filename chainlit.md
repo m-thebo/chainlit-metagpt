@@ -15,7 +15,6 @@ A chat application built with Chainlit and MetaGPT.
 To run this application:
 
 ```bash
-pip install -r requirements.txt
 chainlit run app.py
 ```
 

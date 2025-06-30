@@ -8,15 +8,14 @@ A chat application built with Chainlit and MetaGPT.
 - pip (Python package installer)
 - MetaGPT configuration (already set up)
 
-## Installation
+## Installation and setup
 
 1. Download this project
 2. Navigate to the project directory
-3. Install the required dependencies:
+3. Install the required dependencies
+4. Set MetaGPT configuration by initializing ``` metagpt --init-config ``` or by manually creating ```~/.metagpt/config2.yaml```
+5. Configure the `~/.metagpt/config2.yaml` file according to your need.
 
-```
-pip install -r requirements.txt
-```
 
 ## Running the Application
 
