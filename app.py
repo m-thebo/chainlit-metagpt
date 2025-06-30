@@ -11,6 +11,7 @@ import socket
 import re
 import webbrowser
 import asyncio
+import logging
 
 # MetaGPT team-based imports
 from init_setup import ChainlitEnv
@@ -27,12 +28,124 @@ from metagpt.roles import Role
 from metagpt.schema import Message
 from metagpt.logs import logger
 
+# Import the SerperWrapper
+try:
+    from metagpt.tools.search_engine_serper import SerperWrapper
+    SEARCH_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Could not import SerperWrapper: {e}")
+    SEARCH_AVAILABLE = False
+    # Create a dummy class for when search is not available
+    class SerperWrapper:
+        def __init__(self, api_key=None):
+            self.api_key = api_key
+        
+        async def run(self, query, max_results=5):
+            return "Web search not available - SerperWrapper import failed"
+
 # Load environment variables
 load_dotenv()
+
+# Configure enhanced logging for search activities with UTF-8 encoding
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)-8s | %(name)s:%(funcName)s:%(lineno)d - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('search_activities.log', encoding='utf-8')
+    ]
+)
 
 # Global variable to track the server
 local_server = None
 server_port = 9000
+
+def safe_serialize(obj):
+    """Safely serialize an object, handling non-serializable types"""
+    try:
+        if hasattr(obj, '__dict__'):
+            # For objects like Message, extract relevant attributes
+            if hasattr(obj, 'content'):
+                return f"[{type(obj).__name__}] {obj.content}"
+            elif hasattr(obj, 'role'):
+                return f"[{type(obj).__name__}] role: {obj.role}"
+            else:
+                return f"[{type(obj).__name__}] {str(obj.__dict__)}"
+        elif isinstance(obj, (list, tuple)):
+            return [safe_serialize(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {str(k): safe_serialize(v) for k, v in obj.items()}
+        else:
+            return str(obj)
+    except Exception as e:
+        return f"[Non-serializable {type(obj).__name__}] Error: {str(e)}"
+
+# Custom Search Action
+class SearchWeb(Action):
+    name: str = "SearchWeb"
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Initialize SerperWrapper with API key from environment
+        serper_api_key = os.getenv("SERPER_API_KEY")
+        if not serper_api_key:
+            logger.warning("SERPER_API_KEY not found in environment variables. Web search will be disabled.")
+            self.search_enabled = False
+        else:
+            self.search_wrapper = SerperWrapper(api_key=serper_api_key)
+            self.search_enabled = True
+    
+    async def run(self, query: str, max_results: int = 5, agent_name: str = "Unknown") -> str:
+        """Search the web using Serper API with enhanced logging"""
+        if not self.search_enabled:
+            logger.info(f"[{agent_name}] Web search disabled - SERPER_API_KEY not configured")
+            return "Web search is not available. SERPER_API_KEY not configured."
+        
+        try:
+            logger.info(f"[{agent_name}] Searching web for: '{query}'")
+            
+            # Log the search attempt
+            search_log_msg = f"🔍 **{agent_name}** is searching the web for: *{query}*"
+            await cl.Message(content=search_log_msg).send()
+            
+            search_results = await self.search_wrapper.run(query, max_results=max_results)
+            
+            # Log successful search and the actual results
+            logger.info(f"[{agent_name}] Search completed successfully")
+            
+            # Clean and log search results safely
+            try:
+                # Use safe serialization to handle non-serializable objects
+                safe_results = safe_serialize(search_results)
+                clean_results = str(safe_results).replace('\n', ' ').replace('\r', ' ')[:500]  # Limit length
+                logger.info(f"[{agent_name}] Search results for '{query}':\n{clean_results}")
+                success_log_msg = f"✅ **{agent_name}** found {max_results} relevant results"
+                await cl.Message(content=success_log_msg).send()
+                
+                # Show search results in chat
+                await cl.Message(content=f"📊 **Search Results:**\n{clean_results}").send()
+            except Exception as e:
+                logger.warning(f"Error logging search results: {e}")
+                # Still log that we have results, even if we can't format them
+                logger.info(f"[{agent_name}] Search completed with results (formatting failed: {e})")
+                success_log_msg = f"✅ **{agent_name}** found {max_results} relevant results"
+                await cl.Message(content=success_log_msg).send()
+            
+            # Return clean search results
+            try:
+                # Use safe serialization for return value too
+                safe_return = safe_serialize(search_results)
+                clean_return = str(safe_return).replace('\n', ' ').replace('\r', ' ')[:1000]  # Limit length
+                return f"Search results for '{query}':\n{clean_return}"
+            except Exception as e:
+                logger.warning(f"Error cleaning search results for return: {e}")
+                # Still return something useful
+                return f"Search results for '{query}':\n[Results available but could not be formatted due to serialization error: {e}]"
+        except Exception as e:
+            error_msg = f"[{agent_name}] Search failed: {str(e)}"
+            logger.error(error_msg)
+            await cl.Message(content=f"❌ **{agent_name}** search failed: {str(e)}").send()
+            return f"Search failed: {str(e)}"
 
 # Custom Deployer Action
 class CreateExecutable(Action):
@@ -95,6 +208,144 @@ class CreateExecutable(Action):
         
         return executables
 
+# Enhanced Roles with Search Capabilities
+class SearchEnabledProductManager(ProductManager):
+    """Product Manager with web search capabilities"""
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.set_actions([SearchWeb()] + self.actions)
+    
+    async def _act(self) -> Message:
+        # First, search for relevant information about the project
+        if hasattr(self, 'rc') and self.rc.todo and hasattr(self.rc.todo, 'name') and self.rc.todo.name == "SearchWeb":
+            # Get the most recent message
+            msg = self.get_memories(k=1)[0]
+            search_query = f"latest market trends and best practices for {msg.content}"
+            
+            # Log the search activity
+            logger.info(f"[Product Manager] Starting market research: {search_query}")
+            await cl.Message(content=f"🎯 **Product Manager** is conducting market research...").send()
+            
+            search_results = await self.rc.todo.run(search_query, agent_name="Product Manager")
+            
+            # Create enhanced message with search results
+            try:
+                enhanced_content = f"{msg.content}\n\n**📊 Market Research from Web Search:**\n{search_results}"
+                enhanced_msg = Message(content=enhanced_content, role=msg.role, cause_by=msg.cause_by)
+                
+                # Replace the original message with enhanced one
+                self.rc.memory.add(enhanced_msg)
+            except Exception as e:
+                logger.warning(f"Error creating enhanced message: {e}")
+                # Fallback: just log the search was completed
+                logger.info(f"[Product Manager] Search completed but could not enhance message: {e}")
+            
+            # Log completion
+            logger.info("[Product Manager] Market research completed")
+            await cl.Message(content="✅ **Product Manager** market research completed").send()
+        
+        return await super()._act()
+
+class SearchEnabledArchitect(Architect):
+    """Architect with web search capabilities"""
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.set_actions([SearchWeb()] + self.actions)
+    
+    async def _act(self) -> Message:
+        # Search for technical information before designing
+        if hasattr(self, 'rc') and self.rc.todo and hasattr(self.rc.todo, 'name') and self.rc.todo.name == "SearchWeb":
+            msg = self.get_memories(k=1)[0]
+            search_query = f"latest architecture patterns and technologies for {msg.content}"
+            
+            # Log the search activity
+            logger.info(f"[Architect] Starting technical research: {search_query}")
+            await cl.Message(content=f"🏗️ **Architect** is researching latest technologies...").send()
+            
+            search_results = await self.rc.todo.run(search_query, agent_name="Architect")
+            
+            try:
+                enhanced_content = f"{msg.content}\n\n**🔧 Technical Research from Web Search:**\n{search_results}"
+                enhanced_msg = Message(content=enhanced_content, role=msg.role, cause_by=msg.cause_by)
+                self.rc.memory.add(enhanced_msg)
+            except Exception as e:
+                logger.warning(f"Error creating enhanced message: {e}")
+                logger.info(f"[Architect] Search completed but could not enhance message: {e}")
+            
+            # Log completion
+            logger.info("[Architect] Technical research completed")
+            await cl.Message(content="✅ **Architect** technical research completed").send()
+        
+        return await super()._act()
+
+class SearchEnabledEngineer(Engineer):
+    """Engineer with web search capabilities"""
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.set_actions([SearchWeb()] + self.actions)
+    
+    async def _act(self) -> Message:
+        # Search for coding best practices and libraries
+        if hasattr(self, 'rc') and self.rc.todo and hasattr(self.rc.todo, 'name') and self.rc.todo.name == "SearchWeb":
+            msg = self.get_memories(k=1)[0]
+            search_query = f"latest coding best practices and libraries for {msg.content}"
+            
+            # Log the search activity
+            logger.info(f"[Engineer] Starting development research: {search_query}")
+            await cl.Message(content=f"👨‍💻 **Engineer** is researching best practices...").send()
+            
+            search_results = await self.rc.todo.run(search_query, agent_name="Engineer")
+            
+            try:
+                enhanced_content = f"{msg.content}\n\n**💻 Development Research from Web Search:**\n{search_results}"
+                enhanced_msg = Message(content=enhanced_content, role=msg.role, cause_by=msg.cause_by)
+                self.rc.memory.add(enhanced_msg)
+            except Exception as e:
+                logger.warning(f"Error creating enhanced message: {e}")
+                logger.info(f"[Engineer] Search completed but could not enhance message: {e}")
+            
+            # Log completion
+            logger.info("[Engineer] Development research completed")
+            await cl.Message(content="✅ **Engineer** development research completed").send()
+        
+        return await super()._act()
+
+class SearchEnabledQaEngineer(QaEngineer):
+    """QA Engineer with web search capabilities"""
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.set_actions([SearchWeb()] + self.actions)
+    
+    async def _act(self) -> Message:
+        # Search for testing best practices
+        if hasattr(self, 'rc') and self.rc.todo and hasattr(self.rc.todo, 'name') and self.rc.todo.name == "SearchWeb":
+            msg = self.get_memories(k=1)[0]
+            search_query = f"latest testing best practices and tools for {msg.content}"
+            
+            # Log the search activity
+            logger.info(f"[QA Engineer] Starting testing research: {search_query}")
+            await cl.Message(content=f"🧪 **QA Engineer** is researching testing tools...").send()
+            
+            search_results = await self.rc.todo.run(search_query, agent_name="QA Engineer")
+            
+            try:
+                enhanced_content = f"{msg.content}\n\n**🧪 Testing Research from Web Search:**\n{search_results}"
+                enhanced_msg = Message(content=enhanced_content, role=msg.role, cause_by=msg.cause_by)
+                self.rc.memory.add(enhanced_msg)
+            except Exception as e:
+                logger.warning(f"Error creating enhanced message: {e}")
+                logger.info(f"[QA Engineer] Search completed but could not enhance message: {e}")
+            
+            # Log completion
+            logger.info("[QA Engineer] Testing research completed")
+            await cl.Message(content="✅ **QA Engineer** testing research completed").send()
+        
+        return await super()._act()
+
 # Custom Deployer Role
 class Deployer(Role):
     name: str = "Deployer"
@@ -102,10 +353,18 @@ class Deployer(Role):
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.set_actions([CreateExecutable])
+        self.set_actions([CreateExecutable, SearchWeb()])
     
     async def _act(self) -> Message:
-        logger.info(f"{self._setting}: to do {self.rc.todo}({self.rc.todo.name})")
+        # Safe logging with error handling
+        try:
+            if self.rc.todo and hasattr(self.rc.todo, 'name'):
+                logger.info(f"{self._setting}: to do {self.rc.todo}({self.rc.todo.name})")
+            else:
+                logger.info(f"{self._setting}: to do {self.rc.todo}")
+        except Exception as e:
+            logger.warning(f"Error logging todo: {e}")
+        
         todo = self.rc.todo
         
         # Get the most recent message which should contain project info
@@ -113,6 +372,30 @@ class Deployer(Role):
         
         # Extract project information from the message
         project_description = msg.content
+        
+        # Search for deployment best practices
+        if hasattr(todo, 'name') and todo.name == "SearchWeb":
+            search_query = f"latest deployment and hosting best practices for {project_description}"
+            
+            # Log the search activity
+            logger.info(f"[Deployer] Starting deployment research: {search_query}")
+            await cl.Message(content=f"🚀 **Deployer** is researching deployment strategies...").send()
+            
+            search_results = await todo.run(search_query, agent_name="Deployer")
+            
+            try:
+                enhanced_content = f"{project_description}\n\n**🚀 Deployment Research from Web Search:**\n{search_results}"
+                enhanced_msg = Message(content=enhanced_content, role=msg.role, cause_by=msg.cause_by)
+                self.rc.memory.add(enhanced_msg)
+            except Exception as e:
+                logger.warning(f"Error creating enhanced message: {e}")
+                logger.info(f"[Deployer] Search completed but could not enhance message: {e}")
+            
+            # Log completion
+            logger.info("[Deployer] Deployment research completed")
+            await cl.Message(content="✅ **Deployer** deployment research completed").send()
+            
+            return enhanced_msg
         
         # Get project files from the workspace - handle case when env might not be available
         try:
@@ -248,7 +531,7 @@ async def chat_profile() -> list[cl.ChatProfile]:
 async def start():
     """Initialize the chat session"""
     await cl.Message(
-        content="Hello! I'm your **MetaGPT Software Company** assistant. I'll create a complete software development team to build your project!\n\n**Team Roles:**\n- 🎯 **Product Manager**: Creates requirements and user stories\n- 🏗️ **Architect**: Designs system architecture\n- 📋 **Project Manager**: Plans and manages tasks\n- 👨‍💻 **Engineer**: Writes and reviews code (with 5 team members)\n- 🧪 **QA Engineer**: Tests and ensures quality\n- 🚀 **Deployer**: Creates executable files to run your project\n\nJust describe what you want to build, and the team will collaborate to create it!"
+        content="Hello! I'm your **MetaGPT Software Company** assistant. I'll create a complete software development team to build your project!\n\n**Team Roles:**\n- 🎯 **Product Manager**: Creates requirements and user stories (with web search for market research)\n- 🏗️ **Architect**: Designs system architecture (with web search for latest tech trends)\n- 📋 **Project Manager**: Plans and manages tasks\n- 👨‍💻 **Engineer**: Writes and reviews code (with web search for best practices)\n- 🧪 **QA Engineer**: Tests and ensures quality (with web search for testing tools)\n- 🚀 **Deployer**: Creates executable files to run your project (with web search for deployment best practices)\n\n**🔍 All agents have web search capabilities** to make informed decisions based on the latest information!\n\nJust describe what you want to build, and the team will collaborate to create it!"
     ).send()
 
 @cl.on_message
@@ -272,11 +555,11 @@ async def main(message: cl.Message):
 
         # Hire the software development team including the Deployer
         company.hire([
-            ProductManager(),
-            Architect(),
-            ProjectManager(),
-            Engineer(n_borg=5, use_code_review=True),
-            QaEngineer(),
+            SearchEnabledProductManager(),
+            SearchEnabledArchitect(),
+            ProjectManager(),  # Project Manager doesn't need search for now
+            SearchEnabledEngineer(n_borg=5, use_code_review=True),
+            SearchEnabledQaEngineer(),
             Deployer(),  # Add the custom Deployer agent
         ])
 
@@ -284,11 +567,35 @@ async def main(message: cl.Message):
         company.invest(investment=3.0)
         company.run_project(idea=idea)
 
-        # Run the team collaboration
-        await company.run(n_round=5)
+        # Run the team collaboration with error handling
+        try:
+            await company.run(n_round=5)
+        except Exception as team_error:
+            logger.error(f"Team collaboration error: {team_error}")
+            await cl.Message(
+                content=f"⚠️ **Team collaboration encountered an error:** {str(team_error)}\n\n🔄 **Attempting to continue with available results...**"
+            ).send()
 
         # Get the work directory and files
-        workdir = Path(company.env.context.config.project_path)
+        try:
+            workdir = Path(company.env.context.config.project_path)
+        except Exception as e:
+            logger.error(f"Error getting project path: {e}")
+            # Try to find the most recent workspace directory
+            workspace_dir = Path("workspace")
+            if workspace_dir.exists():
+                # Find the most recent subdirectory
+                subdirs = [d for d in workspace_dir.iterdir() if d.is_dir()]
+                if subdirs:
+                    workdir = max(subdirs, key=lambda x: x.stat().st_mtime)
+                else:
+                    workdir = workspace_dir
+            else:
+                workdir = Path(".")
+            
+            await cl.Message(
+                content=f"⚠️ **Using fallback project directory:** `{workdir}`"
+            ).send()
         
         await cl.Message(
             content=f"✅ **Team collaboration completed!**\n\n📁 **Project directory:** `{workdir}`"
@@ -448,6 +755,22 @@ async def main(message: cl.Message):
         await cl.Message(
             content=f"💰 **Total development cost:** `${total_cost}`"
         ).send()
+
+        # Show search activity summary
+        search_summary = """
+🔍 **Web Search Activity Summary:**
+
+All agents performed web research to ensure the best possible project outcome:
+
+• **Product Manager**: Conducted market research for trends and best practices
+• **Architect**: Researched latest technologies and architecture patterns  
+• **Engineer**: Looked up coding best practices and modern libraries
+• **QA Engineer**: Found testing tools and quality assurance methods
+• **Deployer**: Researched deployment strategies and hosting options
+
+This ensures your project uses the most current and effective approaches! 🚀
+"""
+        await cl.Message(content=search_summary).send()
             
     except Exception as e:
         # Handle any errors

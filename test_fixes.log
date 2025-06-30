@@ -1,0 +1,15 @@
+2025-07-01 02:11:30,143 | INFO     | __main__:test_unicode_logging:42 - ✅ Test success message
+2025-07-01 02:11:30,147 | INFO     | __main__:test_unicode_logging:42 - ❌ Test error message
+2025-07-01 02:11:30,148 | INFO     | __main__:test_unicode_logging:42 - 🔍 Test search message
+2025-07-01 02:11:30,149 | INFO     | __main__:test_unicode_logging:42 - 📊 Test data message
+2025-07-01 02:11:30,149 | INFO     | __main__:test_unicode_logging:42 - 🚀 Test deployment message
+2025-07-01 02:11:30,150 | INFO     | __main__:test_unicode_logging:42 - 🎯 Test product message
+2025-07-01 02:11:30,150 | INFO     | __main__:test_unicode_logging:42 - 🏗️ Test architect message
+2025-07-01 02:11:30,151 | INFO     | __main__:test_unicode_logging:42 - 👨‍💻 Test engineer message
+2025-07-01 02:11:30,151 | INFO     | __main__:test_unicode_logging:42 - 🧪 Test QA message
+2025-07-01 02:11:30,152 | INFO     | __main__:test_search_serialization:69 - [Test] Search result 1: Search result with newlines and special chars
+2025-07-01 02:11:30,152 | INFO     | __main__:test_search_serialization:69 - [Test] Search result 2: Result with quotes: 'single' and "double"
+2025-07-01 02:11:30,153 | INFO     | __main__:test_search_serialization:69 - [Test] Search result 3: Result with unicode: 🎯📊🚀
+2025-07-01 02:11:30,154 | INFO     | __main__:test_search_serialization:69 - [Test] Search result 4: Result with backslashes: \n\t\r
+2025-07-01 02:11:30,154 | INFO     | __main__:test_search_serialization:69 - [Test] Search result 5: Result with brackets: [content] and {data}
+2025-07-01 02:11:30,155 | INFO     | __main__:test_error_handling:90 - Todo: None

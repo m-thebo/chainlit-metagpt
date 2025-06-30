@@ -1,0 +1,21 @@
+{
+  "name": "todo-list-site",
+  "version": "1.0.0",
+  "description": "A simple todo list application",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "dependencies": {
+    "express": "^4.17.1",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "react-scripts": "5.0.0"
+  },
+  "devDependencies": {},
+  "author": "",
+  "license": "ISC"
+}
