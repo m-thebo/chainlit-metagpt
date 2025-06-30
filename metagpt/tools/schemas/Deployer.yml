@@ -1,0 +1,11 @@
+type: class
+description: Deploy a local service to public. Used only for final deployment, you
+  should NOT use it for development and testing.
+methods:
+  deploy_to_public:
+    type: async_function
+    description: 'Deploy a web project to public. '
+    signature: '(self, dist_dir: str, test_mode: bool = False)'
+    parameters: 'Args: dist_dir (str): The dist directory of the web project after
+      run build. test_mode (bool): If True, only start a local server and return the
+      local URL. >>> deployer = Deployer("2048_game/dist")'
